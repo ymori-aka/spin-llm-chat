@@ -1,0 +1,18 @@
+apiVersion: core.spinkube.dev/v1alpha1
+kind: SpinApp
+metadata:
+  name: spin-llm-chat
+spec:
+  image: "ghcr.io/ymori-aka/spin-llm-chat:latest"
+  executor: containerd-shim-spin
+  replicas: 1
+  variables:
+  - name: backend_url
+    value: https://spin-chat-ai-gateway-7823ac1.zuplo.app
+  - name: zuplo_api_key
+    valueFrom:
+      secretKeyRef:
+        name: zuplo-api-key
+        key: api-key
+  imagePullSecrets:
+    - name: ghcr-pull

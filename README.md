@@ -55,4 +55,56 @@ spin kube scaffold -f spin.toml -o spinapp.yaml
 kubectl apply -f spinapp.yaml
 ```
 
-SpinKube 未導入のクラスタでは事前に `spin-operator` と `containerd-shim-spin` (runtime class) のインストールが必要。
+### クラスタ準備 (kind、検証済み手順)
+
+`containerd-shim-spin` 入りの kind イメージでクラスタを作る。
+
+```bash
+kind create cluster --name spin-llm-chat --image ghcr.io/spinframework/containerd-shim-spin/kind:v0.25.1 --config=- <<'EOF'
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+containerdConfigPatches:
+- |-
+  [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.spin]
+    runtime_type = "io.containerd.spin.v2"
+  [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.spin.options]
+    SystemdCgroup = true
+EOF
+
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.20.0/cert-manager.yaml
+kubectl wait --for=condition=available --timeout=300s deployment/cert-manager-webhook -n cert-manager
+
+kubectl apply -f https://github.com/spinframework/spin-operator/releases/download/v0.6.1/spin-operator.runtime-class.yaml
+kubectl apply -f https://github.com/spinframework/spin-operator/releases/download/v0.6.1/spin-operator.crds.yaml
+
+helm upgrade --install spin-operator \
+  --namespace spin-operator --create-namespace \
+  --version 0.6.1 --wait \
+  oci://ghcr.io/spinframework/charts/spin-operator
+
+kubectl apply -f https://github.com/spinframework/spin-operator/releases/download/v0.6.1/spin-operator.shim-executor.yaml
+```
+
+> ghcr.io の pull が `denied` になる場合、古い認証情報が残っていることがある。`docker logout ghcr.io` で匿名 pull に戻せる。
+
+### アプリの配置
+
+アプリを OCI レジストリに push し、APIキーは Secret 経由で渡す。
+
+```bash
+gh auth token | spin registry login ghcr.io -u <user> --password-stdin
+spin build && spin registry push ghcr.io/<user>/spin-llm-chat:latest
+
+# private パッケージを pull するための secret
+kubectl create secret docker-registry ghcr-pull \
+  --docker-server=ghcr.io --docker-username=<user> \
+  --docker-password="$(gh auth token)"
+
+# APIキーは YAML に平文で書かず Secret から参照する
+kubectl create secret generic zuplo-api-key --from-literal=api-key='zpka_...'
+
+kubectl apply -f spinapp.yaml
+kubectl port-forward svc/spin-llm-chat 8084:80
+```
+
+[spinapp.yaml](spinapp.yaml) は `zuplo_api_key` を `secretKeyRef` で参照しているので、秘密情報はリポジトリに入らない。
