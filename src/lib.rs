@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
-use spin_sdk::http::body::IncomingBodyExt;
-use spin_sdk::http::{self, IntoResponse, Method, Request};
-use spin_sdk::http_service;
+use spin_sdk::http::{IntoResponse, Method, Request, Response};
+use spin_sdk::http_component;
 use spin_sdk::variables;
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
@@ -46,28 +45,17 @@ struct UpstreamChoiceMessage {
     content: String,
 }
 
-#[http_service]
+#[http_component]
 async fn handle(req: Request) -> anyhow::Result<impl IntoResponse> {
-    let path = req.uri().path().to_string();
-    let method = req.method().clone();
-
-    if method == Method::GET && path == "/" {
-        return html_response(INDEX_HTML);
+    match (req.method(), req.path()) {
+        (&Method::Get, "/") => Ok(html_response(INDEX_HTML)),
+        (&Method::Post, "/api/chat") => chat_response(req).await,
+        _ => Ok(error_response(404, "not found")),
     }
-    if method == Method::POST && path == "/api/chat" {
-        return chat_response(req).await;
-    }
-    Ok(error_response(404, "not found"))
 }
 
-async fn chat_response(req: Request) -> anyhow::Result<http::Response<String>> {
-    let body_bytes = req
-        .into_body()
-        .bytes()
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to read request body: {e}"))?;
-
-    let chat_req: ChatRequest = match serde_json::from_slice(&body_bytes) {
+async fn chat_response(req: Request) -> anyhow::Result<Response> {
+    let chat_req: ChatRequest = match serde_json::from_slice(req.body()) {
         Ok(v) => v,
         Err(e) => return Ok(error_response(400, &format!("invalid request body: {e}"))),
     };
@@ -77,18 +65,14 @@ async fn chat_response(req: Request) -> anyhow::Result<http::Response<String>> {
     }
 
     let backend_url = variables::get("backend_url")
-        .await
         .map_err(|e| anyhow::anyhow!("missing backend_url variable: {e}"))?;
-    let model = variables::get("model")
-        .await
-        .map_err(|e| anyhow::anyhow!("missing model variable: {e}"))?;
+    let model =
+        variables::get("model").map_err(|e| anyhow::anyhow!("missing model variable: {e}"))?;
     let zuplo_api_key = variables::get("zuplo_api_key")
-        .await
         .map_err(|e| anyhow::anyhow!("missing zuplo_api_key variable: {e}"))?;
     // Kept low and configurable: the Zuplo Firewall for AI's LLM-DOS-OUT rule
     // rejects completions with 400 once generated output gets too large.
     let max_tokens: u32 = variables::get("max_tokens")
-        .await
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(200);
@@ -112,35 +96,30 @@ async fn chat_response(req: Request) -> anyhow::Result<http::Response<String>> {
         "{}/v1/chat/completions?nocache={nonce}",
         backend_url.trim_end_matches('/')
     );
-    let upstream_request = http::Request::builder()
-        .method(Method::POST)
+    let upstream_request = Request::builder()
+        .method(Method::Post)
         .uri(&url)
         .header("content-type", "application/json")
         .header("authorization", format!("Bearer {zuplo_api_key}"))
         .header("cache-control", "no-cache, no-store")
-        .body(payload)?;
+        .body(payload)
+        .build();
 
-    let upstream_resp = match spin_sdk::http::send(upstream_request).await {
+    let upstream_resp: Response = match spin_sdk::http::send(upstream_request).await {
         Ok(r) => r,
         Err(e) => return Ok(error_response(502, &format!("upstream request failed: {e}"))),
     };
 
-    let status = upstream_resp.status();
-    let resp_bytes = upstream_resp
-        .into_body()
-        .bytes()
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to read upstream response: {e}"))?;
-
-    if !status.is_success() {
-        let text = String::from_utf8_lossy(&resp_bytes).to_string();
+    let status = *upstream_resp.status();
+    if !(200..300).contains(&status) {
+        let text = String::from_utf8_lossy(upstream_resp.body()).to_string();
         return Ok(error_response(
             502,
             &format!("upstream returned {status}: {text}"),
         ));
     }
 
-    let parsed: UpstreamResponse = match serde_json::from_slice(&resp_bytes) {
+    let parsed: UpstreamResponse = match serde_json::from_slice(upstream_resp.body()) {
         Ok(v) => v,
         Err(e) => {
             return Ok(error_response(
@@ -157,24 +136,25 @@ async fn chat_response(req: Request) -> anyhow::Result<http::Response<String>> {
         .map(|c| c.message.content)
         .unwrap_or_default();
 
-    let body = serde_json::to_string(&ChatReply { reply })?;
-    Ok(http::Response::builder()
+    Ok(Response::builder()
         .status(200)
         .header("content-type", "application/json")
-        .body(body)?)
+        .body(serde_json::to_string(&ChatReply { reply })?)
+        .build())
 }
 
-fn html_response(html: &str) -> anyhow::Result<http::Response<String>> {
-    Ok(http::Response::builder()
+fn html_response(html: &str) -> Response {
+    Response::builder()
         .status(200)
         .header("content-type", "text/html; charset=utf-8")
-        .body(html.to_string())?)
+        .body(html)
+        .build()
 }
 
-fn error_response(status: u16, msg: &str) -> http::Response<String> {
-    http::Response::builder()
+fn error_response(status: u16, msg: &str) -> Response {
+    Response::builder()
         .status(status)
         .header("content-type", "text/plain")
         .body(msg.to_string())
-        .unwrap()
+        .build()
 }

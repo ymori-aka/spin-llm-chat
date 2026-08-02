@@ -14,6 +14,18 @@ Browser --POST /api/chat-----> Spin component --HTTPS--> Zuplo AI Gateway (Firew
 - Zuplo AI Gateway 側の `LLM-DOS-IN` / `LLM-DOS-OUT` ルールがリクエスト/レスポンスサイズを制限しているため、`max_tokens` はデフォルト200に抑えている(必要なら変数で調整)。
 - Zuplo AI Gateway は `/v1/chat/completions` を URLベースでキャッシュするため、リクエストのたびに `?nocache=<nonce>` を付与してキャッシュミスを強制している。
 
+### WASI のバージョンについて
+
+**Akamai Functions は WASI 0.3 (Spin 4 の既定) に未対応**なので、このアプリは WASI 0.2 (`wasm32-wasip1` / spin-sdk 5.x / `#[http_component]`) で書いてある。
+Spin 4 の `#[http_service]` + `wasm32-wasip2` で書くと `spin up` と SpinKube では動くが、`spin aka deploy` が次のエラーで落ちる:
+
+```
+Error: This app requires feature(s) that are not yet available in Akamai Functions:
+* Component llm-chat uses the WASI 0.3 HTTP handler interface
+```
+
+`spin new` する場合は `http-rust` ではなく **`http-rust-p2`** テンプレートを使うこと。
+
 ## 必須の変数
 
 | 変数 | 必須 | 説明 |
@@ -26,7 +38,7 @@ Browser --POST /api/chat-----> Spin component --HTTPS--> Zuplo AI Gateway (Firew
 ## ローカル実行 (`spin up`)
 
 ```bash
-rustup target add wasm32-wasip2
+rustup target add wasm32-wasip1
 spin build
 
 SPIN_VARIABLE_BACKEND_URL="https://<your-gateway>.zuplo.app" \
@@ -40,12 +52,15 @@ spin up --listen 127.0.0.1:3030
 
 ```bash
 spin plugins install aka --yes
-spin aka login
+spin aka login   # ブラウザ認証。PAT は最長90日で失効する
 
-spin aka deploy --build \
+spin aka deploy --build --no-confirm \
+  --create-name llm-chat \
   --variable backend_url=https://<your-gateway>.zuplo.app \
   --variable zuplo_api_key=zpka_...
 ```
+
+2回目以降は `--create-name` 不要(workspace がアプリに紐づく)。非対話環境では `--no-confirm` が必須。
 
 ## SpinKube (Kubernetes) へのデプロイ
 

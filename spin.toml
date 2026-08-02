@@ -19,7 +19,7 @@ zuplo_api_key = { required = true, secret = true }
 max_tokens = { default = "200" }
 
 [component.llm-chat]
-source = "target/wasm32-wasip2/release/llm_chat.wasm"
+source = "target/wasm32-wasip1/release/llm_chat.wasm"
 # Egress is locked to exactly the configured gateway host — the component
 # cannot reach any other host regardless of what application code does.
 allowed_outbound_hosts = ["{{ backend_url }}"]
@@ -29,5 +29,5 @@ model = "{{ model }}"
 zuplo_api_key = "{{ zuplo_api_key }}"
 max_tokens = "{{ max_tokens }}"
 [component.llm-chat.build]
-command = "cargo build --target wasm32-wasip2 --release"
+command = "cargo build --target wasm32-wasip1 --release"
 watch = ["src/**/*.rs", "Cargo.toml"]
