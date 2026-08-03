@@ -1,0 +1,19 @@
+// Contract for the PII guard. Implemented in Python (componentize-py).
+package ymori:pii@0.1.0;
+
+interface guard {
+    record verdict {
+        // True when the text must not be forwarded to the LLM.
+        blocked: bool,
+        // Human-readable explanation, shown in the chat UI when blocked.
+        reason: string,
+    }
+
+    check: func(text: string) -> verdict;
+}
+
+world pii-guard {
+    // CPython needs the wasi:cli imports; the host satisfies them after composition.
+    include wasi:cli/imports@0.2.0;
+    export guard;
+}

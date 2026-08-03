@@ -3,6 +3,20 @@ use spin_sdk::http::{IntoResponse, Method, Request, Response};
 use spin_sdk::http_component;
 use spin_sdk::variables;
 
+/// Bindings for the two guardrail interfaces. There is no implementation here:
+/// Spin composes the Go and Python components in at build time (see
+/// `[component.llm-chat.dependencies]`), so `check` is a direct call into
+/// another language, not a network request.
+mod guards {
+    wit_bindgen::generate!({
+        path: "wit",
+        world: "chat-guards",
+        generate_all,
+    });
+}
+
+use guards::ymori::{injection::guard as injection, pii::guard as pii};
+
 const INDEX_HTML: &str = include_str!("../static/index.html");
 
 #[derive(Deserialize, Serialize)]
@@ -49,9 +63,103 @@ struct UpstreamChoiceMessage {
 async fn handle(req: Request) -> anyhow::Result<impl IntoResponse> {
     match (req.method(), req.path()) {
         (&Method::Get, "/") => Ok(html_response(INDEX_HTML)),
+        (&Method::Get, "/api/whereami") => whereami_response(&req).await,
         (&Method::Post, "/api/chat") => chat_response(req).await,
         _ => Ok(error_response(404, "not found")),
     }
+}
+
+#[derive(Deserialize)]
+struct GeoLookup {
+    city: Option<String>,
+    region: Option<String>,
+    country_name: Option<String>,
+    org: Option<String>,
+}
+
+/// Reports where this request entered and where it is being served from, so the
+/// UI can show the real path rather than a diagram of one.
+async fn whereami_response(req: &Request) -> anyhow::Result<Response> {
+    let header = |name: &str| {
+        req.header(name)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    };
+
+    // Akamai terminates at a "ghost" edge server and tags the hop; its absence
+    // means we are running somewhere else (SpinKube, or a local spin up).
+    let via = header("via");
+    let on_akamai = via.as_deref().is_some_and(|v| v.contains("akamai"))
+        || header("cdn-loop").is_some_and(|v| v.contains("akamai"));
+    let deployment = variables::get("deployment").unwrap_or_else(|_| "unknown".into());
+    let runtime = if on_akamai {
+        "akamai functions".to_string()
+    } else {
+        deployment
+    };
+
+    let client_ip = header("true-client-ip")
+        .or_else(|| header("x-forwarded-for"))
+        .unwrap_or_default();
+
+    let geo = if client_ip.is_empty() {
+        None
+    } else {
+        lookup_geo(&client_ip).await
+    };
+    let location = match geo {
+        Some(g) => {
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(c) = g.city.filter(|s| !s.is_empty()) {
+                parts.push(c);
+            }
+            if let Some(r) = g.region.filter(|s| !s.is_empty()) {
+                parts.push(r);
+            }
+            if let Some(c) = g.country_name.filter(|s| !s.is_empty()) {
+                parts.push(c);
+            }
+            serde_json::json!({
+                "place": parts.join(", "),
+                "org": g.org.unwrap_or_default(),
+            })
+        }
+        None => serde_json::json!({ "place": "", "org": "" }),
+    };
+
+    let backend_url = variables::get("backend_url").unwrap_or_default();
+    let body = serde_json::json!({
+        "runtime": runtime,
+        "onAkamai": on_akamai,
+        "via": via.unwrap_or_default(),
+        "clientIp": client_ip,
+        "location": location,
+        "gateway": backend_url
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .to_string(),
+        "model": variables::get("model").unwrap_or_default(),
+    });
+
+    Ok(Response::builder()
+        .status(200)
+        .header("content-type", "application/json")
+        .body(serde_json::to_string(&body)?)
+        .build())
+}
+
+/// Best-effort: the panel degrades to just the IP if the lookup is rate limited.
+async fn lookup_geo(ip: &str) -> Option<GeoLookup> {
+    let request = Request::builder()
+        .method(Method::Get)
+        .uri(format!("https://ipapi.co/{ip}/json/"))
+        .header("user-agent", "spin-llm-chat")
+        .build();
+    let resp: Response = spin_sdk::http::send(request).await.ok()?;
+    if !(200..300).contains(&*resp.status()) {
+        return None;
+    }
+    serde_json::from_slice(resp.body()).ok()
 }
 
 async fn chat_response(req: Request) -> anyhow::Result<Response> {
@@ -62,6 +170,27 @@ async fn chat_response(req: Request) -> anyhow::Result<Response> {
 
     if chat_req.messages.is_empty() {
         return Ok(error_response(400, "messages must not be empty"));
+    }
+
+    // Guardrails run before anything leaves the component: a blocked prompt
+    // never reaches the gateway, so it costs no tokens and no round trip.
+    let latest = chat_req
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.as_str())
+        .unwrap_or_default();
+
+    // Each guard lives in its own WIT package, so the two `verdict` records are
+    // distinct Rust types — check them one at a time rather than in a loop.
+    let injection_verdict = injection::check(latest);
+    if injection_verdict.blocked {
+        return Ok(blocked_response("go", &injection_verdict.reason));
+    }
+    let pii_verdict = pii::check(latest);
+    if pii_verdict.blocked {
+        return Ok(blocked_response("python", &pii_verdict.reason));
     }
 
     let backend_url = variables::get("backend_url")
@@ -148,6 +277,21 @@ fn html_response(html: &str) -> Response {
         .status(200)
         .header("content-type", "text/html; charset=utf-8")
         .body(html)
+        .build()
+}
+
+/// 200 with a `blocked` payload rather than an error status: from the user's
+/// point of view the assistant answered, it just refused.
+fn blocked_response(lang: &str, reason: &str) -> Response {
+    let body = serde_json::json!({
+        "reply": format!("⛔ {reason}"),
+        "blocked": true,
+        "blockedBy": lang,
+    });
+    Response::builder()
+        .status(200)
+        .header("content-type", "application/json")
+        .body(body.to_string())
         .build()
 }
 

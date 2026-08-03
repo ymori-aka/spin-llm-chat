@@ -1,0 +1,23 @@
+// Contract for the prompt-injection guard. Implemented in Go (TinyGo).
+//
+// Kept in its own WIT package so that each guard can be composed independently:
+// two components exporting interfaces from the *same* package collide in Spin's
+// dependency graph ("package has already been registered").
+package ymori:injection@0.1.0;
+
+interface guard {
+    record verdict {
+        // True when the text must not be forwarded to the LLM.
+        blocked: bool,
+        // Human-readable explanation, shown in the chat UI when blocked.
+        reason: string,
+    }
+
+    check: func(text: string) -> verdict;
+}
+
+world injection-guard {
+    // The TinyGo runtime pulls in wasi:cli even for a pure function.
+    include wasi:cli/imports@0.2.0;
+    export guard;
+}

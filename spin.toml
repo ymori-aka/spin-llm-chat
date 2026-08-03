@@ -17,17 +17,45 @@ backend_url = { required = true, description = "Zuplo AI Gateway base URL for th
 model = { default = "google_gemma-4-26B-A4B-it-Q4_K_M.gguf" }
 zuplo_api_key = { required = true, secret = true }
 max_tokens = { default = "200" }
+# Overridden per environment so /api/whereami can say where it is running.
+deployment = { default = "local" }
 
 [component.llm-chat]
 source = "target/wasm32-wasip1/release/llm_chat.wasm"
-# Egress is locked to exactly the configured gateway host — the component
-# cannot reach any other host regardless of what application code does.
-allowed_outbound_hosts = ["{{ backend_url }}"]
+# Egress is limited to exactly two hosts: the gateway and the geo-IP lookup used
+# by /api/whereami. The sandbox enforces this regardless of what the code does.
+allowed_outbound_hosts = ["{{ backend_url }}", "https://ipapi.co"]
 [component.llm-chat.variables]
 backend_url = "{{ backend_url }}"
 model = "{{ model }}"
 zuplo_api_key = "{{ zuplo_api_key }}"
 max_tokens = "{{ max_tokens }}"
+deployment = "{{ deployment }}"
 [component.llm-chat.build]
 command = "cargo build --target wasm32-wasip1 --release"
-watch = ["src/**/*.rs", "Cargo.toml"]
+watch = ["src/**/*.rs", "Cargo.toml", "wit/*.wit"]
+
+# Component Model composition: these two components are written in other
+# languages and are linked into llm-chat at build time. They are pure
+# functions — no network, no variables — so they need no permissions.
+[component.llm-chat.dependencies]
+"ymori:injection/guard@0.1.0" = { component = "injection-guard" }
+"ymori:pii/guard@0.1.0" = { component = "pii-guard" }
+
+[component.injection-guard]
+source = "guards/injection-go/injection-guard.wasm"
+[component.injection-guard.build]
+workdir = "guards/injection-go"
+command = "tinygo build -target=wasip2 --wit-package ./wit --wit-world injection-guard -o injection-guard.wasm ."
+watch = ["guards/injection-go/*.go", "guards/injection-go/wit/*.wit"]
+
+[component.pii-guard]
+source = "guards/pii-py/pii-guard.wasm"
+[component.pii-guard.build]
+workdir = "guards/pii-py"
+command = """
+test -d .venv || python3 -m venv .venv
+.venv/bin/pip install -q componentize-py
+.venv/bin/componentize-py -d ./wit -w pii-guard componentize app -o pii-guard.wasm
+"""
+watch = ["guards/pii-py/app.py", "guards/pii-py/wit/*.wit"]

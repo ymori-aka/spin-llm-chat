@@ -14,5 +14,7 @@ spec:
       secretKeyRef:
         name: zuplo-api-key
         key: api-key
+  - name: deployment
+    value: spinkube
   imagePullSecrets:
     - name: ghcr-pull

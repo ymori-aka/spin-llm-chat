@@ -1,0 +1,10 @@
+// The world the Rust HTTP handler imports. Spin satisfies these two imports
+// from the Go and Python components listed under
+// `[component.llm-chat.dependencies]`, so `check` is a direct cross-language
+// call — no network hop, no JSON serialisation.
+package ymori:chat@0.1.0;
+
+world chat-guards {
+    import ymori:injection/guard@0.1.0;
+    import ymori:pii/guard@0.1.0;
+}
