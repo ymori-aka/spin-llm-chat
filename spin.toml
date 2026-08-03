@@ -13,12 +13,19 @@ route = "/..."
 component = "llm-chat"
 
 [variables]
-backend_url = { required = true, description = "Zuplo AI Gateway base URL for this app, e.g. https://<your-gateway>.zuplo.app" }
+# Defaulted rather than required so the demo commands stay short. Only the
+# secret has to be passed on the command line.
+backend_url = { default = "https://spin-chat-ai-gateway-7823ac1.zuplo.app" }
 model = { default = "google_gemma-4-26B-A4B-it-Q4_K_M.gguf" }
 zuplo_api_key = { required = true, secret = true }
 max_tokens = { default = "200" }
 # Overridden per environment so /api/whereami can say where it is running.
 deployment = { default = "local" }
+# Both default to empty, meaning "derive it": the version falls back to the
+# build id baked in by build.rs, and the accent colour is hashed from that
+# version so every deploy looks different without anyone choosing a colour.
+version = { default = "" }
+accent = { default = "" }
 
 [component.llm-chat]
 source = "target/wasm32-wasip1/release/llm_chat.wasm"
@@ -31,8 +38,10 @@ model = "{{ model }}"
 zuplo_api_key = "{{ zuplo_api_key }}"
 max_tokens = "{{ max_tokens }}"
 deployment = "{{ deployment }}"
+version = "{{ version }}"
+accent = "{{ accent }}"
 [component.llm-chat.build]
-command = "cargo build --target wasm32-wasip1 --release"
+command = "SPIN_BUILD_ID=$(date -u +%Y-%m-%dT%H:%M:%SZ) cargo build --target wasm32-wasip1 --release"
 watch = ["src/**/*.rs", "Cargo.toml", "wit/*.wit"]
 
 # Component Model composition: these two components are written in other

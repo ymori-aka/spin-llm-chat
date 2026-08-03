@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spin LLM Chat</title>
 <style>
-  :root { color-scheme: dark; }
+  :root { color-scheme: dark; --accent: #6c7bff; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     max-width: 760px;
@@ -13,8 +13,18 @@
     padding: 1.5rem;
     background: #0f1115;
     color: #e8e8e8;
+    border-top: 4px solid var(--accent);
   }
-  h1 { font-size: 1.1rem; font-weight: 600; color: #9aa5ff; margin-bottom: 0.25rem; }
+  .head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+  h1 { font-size: 1.1rem; font-weight: 600; color: var(--accent); margin-bottom: 0.25rem; }
+  #version {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
   .sub { font-size: 0.8rem; color: #888; margin-bottom: 1rem; }
 
   #path {
@@ -32,7 +42,7 @@
   .card .k { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: #7c8496; }
   .card .v { font-size: 0.86rem; margin-top: 0.2rem; word-break: break-word; }
   .card .v2 { font-size: 0.74rem; color: #98a0b0; margin-top: 0.1rem; word-break: break-word; }
-  .card.edge { border-color: #3a4a7a; }
+  .card.edge { border-color: var(--accent); }
 
   .langs { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-bottom: 1rem; }
   .chip {
@@ -79,7 +89,7 @@
     padding: 0.6rem 1.2rem;
     border-radius: 8px;
     border: none;
-    background: #6c7bff;
+    background: var(--accent);
     color: white;
     font-weight: 600;
     cursor: pointer;
@@ -93,7 +103,7 @@
 </style>
 </head>
 <body>
-  <h1>Spin LLM Chat</h1>
+  <div class="head"><h1>Spin LLM Chat</h1><span id="version">…</span></div>
   <div class="sub">Rust + Go + Python を 1 つの Wasm コンポーネントに合成 (WebAssembly Component Model)</div>
 
   <div id="path"></div>
@@ -137,6 +147,14 @@ async function loadPath() {
   try {
     const res = await fetch('/api/whereami');
     const d = await res.json();
+
+    // The accent is hashed from the version, so a redeploy visibly recolours
+    // the page even if the version string itself is easy to miss.
+    if (d.accent) document.documentElement.style.setProperty('--accent', d.accent);
+    const badge = document.getElementById('version');
+    badge.textContent = d.version + (d.gitSha ? ' · ' + d.gitSha : '');
+    badge.title = 'build ' + d.version + (d.gitSha ? ' (git ' + d.gitSha + ')' : '');
+
     el.replaceChildren(
       card('実行場所', d.runtime, d.onAkamai ? d.via : '', d.onAkamai ? 'edge' : ''),
       card('アクセス元', d.location.place, d.clientIp, ''),

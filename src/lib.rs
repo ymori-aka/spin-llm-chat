@@ -127,8 +127,22 @@ async fn whereami_response(req: &Request) -> anyhow::Result<Response> {
         None => serde_json::json!({ "place": "", "org": "" }),
     };
 
+    // An explicit --variable version=... wins; otherwise fall back to the build
+    // stamp, so the badge still changes on every deploy.
+    let version = variables::get("version")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| env!("BUILD_ID").to_string());
+    let accent = variables::get("accent")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| accent_for(&version));
+
     let backend_url = variables::get("backend_url").unwrap_or_default();
     let body = serde_json::json!({
+        "version": version,
+        "gitSha": env!("GIT_SHA"),
+        "accent": accent,
         "runtime": runtime,
         "onAkamai": on_akamai,
         "via": via.unwrap_or_default(),
@@ -146,6 +160,23 @@ async fn whereami_response(req: &Request) -> anyhow::Result<Response> {
         .header("content-type", "application/json")
         .body(serde_json::to_string(&body)?)
         .build())
+}
+
+/// Picks a colour for the version string from a fixed palette.
+///
+/// Hashing straight to a hue looks fine on paper but produced 133° and 134° for
+/// two consecutive builds — indistinguishable on stage. These twelve are far
+/// enough apart to read as different at a glance, and all are legible on the
+/// dark UI.
+fn accent_for(version: &str) -> String {
+    const PALETTE: [&str; 12] = [
+        "#ff6b6b", "#ffa94d", "#ffd43b", "#a9e34b", "#51cf66", "#38d9a9",
+        "#3bc9db", "#4dabf7", "#748ffc", "#9775fa", "#da77f2", "#f783ac",
+    ];
+    let hash = version
+        .bytes()
+        .fold(2166136261u32, |h, b| (h ^ b as u32).wrapping_mul(16777619));
+    PALETTE[(hash % PALETTE.len() as u32) as usize].to_string()
 }
 
 /// Best-effort: the panel degrades to just the IP if the lookup is rate limited.
