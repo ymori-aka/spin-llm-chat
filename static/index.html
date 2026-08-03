@@ -140,7 +140,7 @@ async function loadPath() {
     el.replaceChildren(
       card('実行場所', d.runtime, d.onAkamai ? d.via : '', d.onAkamai ? 'edge' : ''),
       card('アクセス元', d.location.place, d.clientIp, ''),
-      card('ゲートウェイ', d.gateway, 'Firewall for AI', ''),
+      card('ゲートウェイ', d.gateway, 'Akamai AI & API Manager', ''),
       card('モデル', d.model.replace(/\.gguf$/, ''), '', '')
     );
   } catch (e) {

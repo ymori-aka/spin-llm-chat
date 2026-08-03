@@ -57,7 +57,7 @@ Error: This app requires feature(s) that are not yet available in Akamai Functio
 | `backend_url` | ✅ | Zuplo AI Gateway のベースURL(例: `https://<your-gateway>.zuplo.app`) |
 | `zuplo_api_key` | ✅ (secret) | Zuplo AI Gateway の API キー |
 | `model` | - | デフォルト `google_gemma-4-26B-A4B-it-Q4_K_M.gguf` |
-| `max_tokens` | - | デフォルト `200`(Firewall for AI の LLM-DOS-OUT 対策) |
+| `max_tokens` | - | デフォルト `200`(Akamai AI & API Manager の LLM-DOS-OUT 対策) |
 | `deployment` | - | `/api/whereami` が返す実行環境名。デフォルト `local` |
 
 ## エンドポイント

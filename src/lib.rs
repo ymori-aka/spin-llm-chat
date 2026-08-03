@@ -199,7 +199,7 @@ async fn chat_response(req: Request) -> anyhow::Result<Response> {
         variables::get("model").map_err(|e| anyhow::anyhow!("missing model variable: {e}"))?;
     let zuplo_api_key = variables::get("zuplo_api_key")
         .map_err(|e| anyhow::anyhow!("missing zuplo_api_key variable: {e}"))?;
-    // Kept low and configurable: the Zuplo Firewall for AI's LLM-DOS-OUT rule
+    // Kept low and configurable: Akamai AI & API Manager's LLM-DOS-OUT rule
     // rejects completions with 400 once generated output gets too large.
     let max_tokens: u32 = variables::get("max_tokens")
         .ok()
