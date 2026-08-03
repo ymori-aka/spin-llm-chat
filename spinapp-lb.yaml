@@ -1,0 +1,20 @@
+# Public entrypoint for the SpinKube deployment.
+#
+# The SpinApp CRD has no serviceType field, so rather than fight the operator
+# over the service it manages, this is a second service selecting the same
+# ready pods. On Linode the CCM turns it into a NodeBalancer.
+apiVersion: v1
+kind: Service
+metadata:
+  name: spin-llm-chat-lb
+  annotations:
+    service.beta.kubernetes.io/linode-loadbalancer-preserve: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    core.spinkube.dev/app.spin-llm-chat.status: ready
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: http-app

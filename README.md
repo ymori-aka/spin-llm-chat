@@ -111,35 +111,35 @@ spin kube scaffold -f spin.toml -o spinapp.yaml
 kubectl apply -f spinapp.yaml
 ```
 
-### クラスタ準備 (kind、検証済み手順)
+### クラスタ準備 (実クラスタ / Linode LKE、検証済み手順)
 
-`containerd-shim-spin` 入りの kind イメージでクラスタを作る。
+kind の場合は `containerd-shim-spin` 入りイメージを使えば済むが、**実クラスタのノードには shim が入っていない**。
+`runtime-class-manager` がノードへ shim を配り、RuntimeClass `wasmtime-spin-v2` を作る。
 
 ```bash
-kind create cluster --name spin-llm-chat --image ghcr.io/spinframework/containerd-shim-spin/kind:v0.25.1 --config=- <<'EOF'
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-containerdConfigPatches:
-- |-
-  [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.spin]
-    runtime_type = "io.containerd.spin.v2"
-  [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.spin.options]
-    SystemdCgroup = true
-EOF
-
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.20.0/cert-manager.yaml
 kubectl wait --for=condition=available --timeout=300s deployment/cert-manager-webhook -n cert-manager
 
-kubectl apply -f https://github.com/spinframework/spin-operator/releases/download/v0.6.1/spin-operator.runtime-class.yaml
-kubectl apply -f https://github.com/spinframework/spin-operator/releases/download/v0.6.1/spin-operator.crds.yaml
+# ノードに containerd-shim-spin をインストールする
+helm upgrade --install runtime-class-manager \
+  --namespace runtime-class-manager --create-namespace \
+  --version 0.2.0 \
+  oci://ghcr.io/spinframework/charts/runtime-class-manager
+kubectl apply -f https://github.com/spinframework/containerd-shim-spin/releases/download/v0.25.1/runtime-class-manager-shim-v1alpha1-v0.25.1.yaml
+kubectl label node --all spin=true      # Shim リソースの nodeSelector と対応
 
+kubectl get shim   # READY と NODES が一致するまで待つ
+
+kubectl apply -f https://github.com/spinframework/spin-operator/releases/download/v0.6.1/spin-operator.crds.yaml
 helm upgrade --install spin-operator \
   --namespace spin-operator --create-namespace \
   --version 0.6.1 --wait \
   oci://ghcr.io/spinframework/charts/spin-operator
-
 kubectl apply -f https://github.com/spinframework/spin-operator/releases/download/v0.6.1/spin-operator.shim-executor.yaml
 ```
+
+> kind で試す場合のみ、上記の runtime-class-manager の代わりに shim 入りイメージ
+> `ghcr.io/spinframework/containerd-shim-spin/kind:v0.25.1` + `spin-operator.runtime-class.yaml` を使う。
 
 > ghcr.io の pull が `denied` になる場合、古い認証情報が残っていることがある。`docker logout ghcr.io` で匿名 pull に戻せる。
 
@@ -164,3 +164,11 @@ kubectl port-forward svc/spin-llm-chat 8084:80
 ```
 
 [spinapp.yaml](spinapp.yaml) は `zuplo_api_key` を `secretKeyRef` で参照しているので、秘密情報はリポジトリに入らない。
+
+ブラウザから見せたい場合は LoadBalancer を追加する。SpinApp CRD に `serviceType` が無いため、
+オペレータが管理する Service とは別に、同じ Pod を指す Service を立てる。
+
+```bash
+kubectl apply -f spinapp-lb.yaml
+kubectl get svc spin-llm-chat-lb -w    # EXTERNAL-IP が付くまで待つ
+```
