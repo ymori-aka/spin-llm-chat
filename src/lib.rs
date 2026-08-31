@@ -35,6 +35,13 @@ struct ChatReply {
     reply: String,
 }
 
+/// Same content as `ChatReply`, but under the key the Online Boutique
+/// frontend's Zuplo lane expects (`{"message": "..."}` — see handlers.go).
+#[derive(Serialize)]
+struct ChatReplyCompat {
+    message: String,
+}
+
 #[derive(Serialize)]
 struct UpstreamRequest<'a> {
     model: &'a str,
@@ -65,6 +72,10 @@ async fn handle(req: Request) -> anyhow::Result<impl IntoResponse> {
         (&Method::Get, "/") => Ok(html_response(INDEX_HTML)),
         (&Method::Get, "/api/whereami") => whereami_response(&req).await,
         (&Method::Post, "/api/chat") => chat_response(req).await,
+        // Compatibility shape for the Online Boutique's shopping-assistant
+        // "zuplo" lane (see akamai-microservices-demo frontend/handlers.go):
+        // same request body, but the response key is `message`, not `reply`.
+        (&Method::Post, "/chat") => chat_response_zuplo_compat(req).await,
         _ => Ok(error_response(404, "not found")),
     }
 }
@@ -301,6 +312,119 @@ async fn chat_response(req: Request) -> anyhow::Result<Response> {
         .header("content-type", "application/json")
         .body(serde_json::to_string(&ChatReply { reply })?)
         .build())
+}
+
+/// Same request/guard/upstream logic as `chat_response`, but replies under
+/// the `{"message": "..."}` shape the Online Boutique frontend's Zuplo lane
+/// expects, and always with HTTP 200 (the frontend never checks the status
+/// code before decoding the body — see handlers.go — so a non-200 here just
+/// means the browser shows a raw decode-error debug string instead of the
+/// actual message).
+async fn chat_response_zuplo_compat(req: Request) -> anyhow::Result<Response> {
+    let chat_req: ChatRequest = match serde_json::from_slice(req.body()) {
+        Ok(v) => v,
+        Err(e) => return Ok(compat_reply(&format!("invalid request body: {e}"))),
+    };
+
+    if chat_req.messages.is_empty() {
+        return Ok(compat_reply("messages must not be empty"));
+    }
+
+    let latest = chat_req
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.as_str())
+        .unwrap_or_default();
+
+    let injection_verdict = injection::check(latest);
+    if injection_verdict.blocked {
+        return Ok(compat_reply(&format!("⛔ {}", injection_verdict.reason)));
+    }
+    let pii_verdict = pii::check(latest);
+    if pii_verdict.blocked {
+        return Ok(compat_reply(&format!("⛔ {}", pii_verdict.reason)));
+    }
+
+    let backend_url = variables::get("backend_url")
+        .map_err(|e| anyhow::anyhow!("missing backend_url variable: {e}"))?;
+    let model =
+        variables::get("model").map_err(|e| anyhow::anyhow!("missing model variable: {e}"))?;
+    let zuplo_api_key = variables::get("zuplo_api_key")
+        .map_err(|e| anyhow::anyhow!("missing zuplo_api_key variable: {e}"))?;
+    let max_tokens: u32 = variables::get("max_tokens")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(200);
+
+    let upstream_req = UpstreamRequest {
+        model: &model,
+        messages: &chat_req.messages,
+        stream: false,
+        max_tokens,
+        temperature: 0.7,
+    };
+    let payload = serde_json::to_string(&upstream_req)?;
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let url = format!(
+        "{}/v1/chat/completions?nocache={nonce}",
+        backend_url.trim_end_matches('/')
+    );
+    let upstream_request = Request::builder()
+        .method(Method::Post)
+        .uri(&url)
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {zuplo_api_key}"))
+        .header("cache-control", "no-cache, no-store")
+        .body(payload)
+        .build();
+
+    let upstream_resp: Response = match spin_sdk::http::send(upstream_request).await {
+        Ok(r) => r,
+        Err(e) => return Ok(compat_reply(&format!("upstream request failed: {e}"))),
+    };
+
+    let status = *upstream_resp.status();
+    if !(200..300).contains(&status) {
+        let text = String::from_utf8_lossy(upstream_resp.body()).to_string();
+        return Ok(compat_reply(&format!("upstream returned {status}: {text}")));
+    }
+
+    let parsed: UpstreamResponse = match serde_json::from_slice(upstream_resp.body()) {
+        Ok(v) => v,
+        Err(e) => return Ok(compat_reply(&format!("failed to parse upstream response: {e}"))),
+    };
+
+    let reply = parsed
+        .choices
+        .into_iter()
+        .next()
+        .map(|c| c.message.content)
+        .unwrap_or_default();
+
+    Ok(Response::builder()
+        .status(200)
+        .header("content-type", "application/json")
+        .body(serde_json::to_string(&ChatReplyCompat { message: reply })?)
+        .build())
+}
+
+fn compat_reply(message: &str) -> Response {
+    Response::builder()
+        .status(200)
+        .header("content-type", "application/json")
+        .body(
+            serde_json::to_string(&ChatReplyCompat {
+                message: message.to_string(),
+            })
+            .unwrap_or_else(|_| "{\"message\":\"internal error\"}".to_string()),
+        )
+        .build()
 }
 
 fn html_response(html: &str) -> Response {
