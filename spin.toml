@@ -15,8 +15,12 @@ component = "llm-chat"
 [variables]
 # Defaulted rather than required so the demo commands stay short. Only the
 # secret has to be passed on the command line.
-backend_url = { default = "https://spin-chat-ai-gateway-7823ac1.zuplo.app" }
-model = { default = "google_gemma-4-26B-A4B-it-Q4_K_M.gguf" }
+backend_url = { default = "https://ec-chat-main-c4d1d89.zuplo.app/config_3114835392f54da99555e30c95cd15a6" }
+# allowed_outbound_hosts only accepts an origin (scheme+host), no path, but the
+# AI Gateway app routes by app_id in the path — so backend_url and the sandbox
+# allowlist need separate variables. Keep this in sync with backend_url's origin.
+backend_host = { default = "https://ec-chat-main-c4d1d89.zuplo.app" }
+model = { default = "gemma4/gemma-4-26b" }
 zuplo_api_key = { required = true, secret = true }
 max_tokens = { default = "200" }
 # Overridden per environment so /api/whereami can say where it is running.
@@ -31,7 +35,7 @@ accent = { default = "" }
 source = "target/wasm32-wasip1/release/llm_chat.wasm"
 # Egress is limited to exactly two hosts: the gateway and the geo-IP lookup used
 # by /api/whereami. The sandbox enforces this regardless of what the code does.
-allowed_outbound_hosts = ["{{ backend_url }}", "https://ipapi.co"]
+allowed_outbound_hosts = ["{{ backend_host }}", "https://ipapi.co"]
 [component.llm-chat.variables]
 backend_url = "{{ backend_url }}"
 model = "{{ model }}"

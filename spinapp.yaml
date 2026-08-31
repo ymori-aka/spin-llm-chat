@@ -8,7 +8,9 @@ spec:
   replicas: 1
   variables:
   - name: backend_url
-    value: https://spin-chat-ai-gateway-7823ac1.zuplo.app
+    value: https://ec-chat-main-c4d1d89.zuplo.app/config_3114835392f54da99555e30c95cd15a6
+  - name: model
+    value: gemma4/gemma-4-26b
   - name: zuplo_api_key
     valueFrom:
       secretKeyRef:
