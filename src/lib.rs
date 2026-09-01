@@ -173,6 +173,23 @@ async fn whereami_response(req: &Request) -> anyhow::Result<Response> {
         .build())
 }
 
+/// Whether the in-component Python PII guard should run.
+///
+/// It overlaps with what Firewall for AI inspects at the gateway, and since it
+/// runs first, leaving it on means a card number never reaches the gateway and
+/// the gateway never gets to demonstrate the block. Off unless `pii_guard` is
+/// explicitly set to a truthy value.
+fn pii_guard_enabled() -> bool {
+    matches!(
+        variables::get("pii_guard")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
 /// Picks a colour for the version string from a fixed palette.
 ///
 /// Hashing straight to a hue looks fine on paper but produced 133° and 134° for
@@ -230,9 +247,11 @@ async fn chat_response(req: Request) -> anyhow::Result<Response> {
     if injection_verdict.blocked {
         return Ok(blocked_response("go", &injection_verdict.reason));
     }
-    let pii_verdict = pii::check(latest);
-    if pii_verdict.blocked {
-        return Ok(blocked_response("python", &pii_verdict.reason));
+    if pii_guard_enabled() {
+        let pii_verdict = pii::check(latest);
+        if pii_verdict.blocked {
+            return Ok(blocked_response("python", &pii_verdict.reason));
+        }
     }
 
     let backend_url = variables::get("backend_url")
@@ -342,9 +361,11 @@ async fn chat_response_zuplo_compat(req: Request) -> anyhow::Result<Response> {
     if injection_verdict.blocked {
         return Ok(compat_reply(&format!("⛔ {}", injection_verdict.reason)));
     }
-    let pii_verdict = pii::check(latest);
-    if pii_verdict.blocked {
-        return Ok(compat_reply(&format!("⛔ {}", pii_verdict.reason)));
+    if pii_guard_enabled() {
+        let pii_verdict = pii::check(latest);
+        if pii_verdict.blocked {
+            return Ok(compat_reply(&format!("⛔ {}", pii_verdict.reason)));
+        }
     }
 
     let backend_url = variables::get("backend_url")
