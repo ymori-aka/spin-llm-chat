@@ -17,6 +17,20 @@ Browser → Akamai Edge → [guards] ⛔遮断 or 通過 → Zuplo AI Gateway �
 
 ガードは**外に出る前**に走るので、遮断されたプロンプトはゲートウェイにも LLM にも到達しない(トークン消費もラウンドトリップもゼロ)。
 
+### ⚠️ Python の PII ガードはデフォルトで無効
+
+これは裏を返すと、**ローカルで遮断するとゲートウェイの Firewall for AI まで届かない**ということでもある。カード番号を入れても `Python guard: card number detected` で止まり、Firewall for AI の遮断は実演できない。
+
+そのため `pii_guard` はデフォルト `false` にしてある。カード番号や PII の遮断は **Zuplo の Firewall for AI 側が担当**する。
+
+コンポーネント内のガードを見せたいときだけ有効化する。
+
+```bash
+spin up --variable pii_guard=true
+```
+
+Go のインジェクション検査は従来どおり常に有効。
+
 ### Component Model の要点
 
 - `check` は **HTTP 呼び出しではない**。`[component.llm-chat.dependencies]` により `spin build` が3つの `.wasm` を1つに合成するので、言語をまたいだ直接関数呼び出しになる。
@@ -58,6 +72,7 @@ Error: This app requires feature(s) that are not yet available in Akamai Functio
 | `zuplo_api_key` | ✅ (secret) | Zuplo AI Gateway の API キー |
 | `model` | - | デフォルト `google_gemma-4-26B-A4B-it-Q4_K_M.gguf` |
 | `max_tokens` | - | デフォルト `200`(Akamai AI & API Manager の LLM-DOS-OUT 対策) |
+| `pii_guard` | - | Python の PII ガードを動かすか。デフォルト **`false`**(下記参照) |
 | `deployment` | - | `/api/whereami` が返す実行環境名。デフォルト `local` |
 
 ## エンドポイント

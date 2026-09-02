@@ -22,6 +22,11 @@ backend_url = { default = "https://ec-chat-main-c4d1d89.zuplo.app/config_3114835
 backend_host = { default = "https://ec-chat-main-c4d1d89.zuplo.app" }
 model = { default = "gemma4/gemma-4-26b" }
 zuplo_api_key = { required = true, secret = true }
+# The local Python PII guard duplicates what Firewall for AI does at the
+# gateway, and because it runs first it stops prompts from ever reaching it.
+# Off by default so the gateway is what blocks; set to "true" to demo the
+# in-component guard instead.
+pii_guard = { default = "false" }
 max_tokens = { default = "200" }
 # Overridden per environment so /api/whereami can say where it is running.
 deployment = { default = "local" }
@@ -41,6 +46,7 @@ backend_url = "{{ backend_url }}"
 model = "{{ model }}"
 zuplo_api_key = "{{ zuplo_api_key }}"
 max_tokens = "{{ max_tokens }}"
+pii_guard = "{{ pii_guard }}"
 deployment = "{{ deployment }}"
 version = "{{ version }}"
 accent = "{{ accent }}"
